@@ -1,7 +1,7 @@
 import logging
 import time
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
 from openai.types.chat import ChatCompletion
 from openai.types.chat.chat_completion import Choice
 from pydantic import BaseModel
@@ -37,12 +37,19 @@ class LLMClient:
         self, prompt: str, schema: type[T], system: str | None = None
     ) -> T:
         started = time.perf_counter()
-        response = await self._client.chat.completions.parse(
-            model=self.model,
-            messages=self._build_messages(prompt, system),
-            temperature=self._temperature,
-            response_format=schema,
-        )
+        try:
+            response = await self._client.chat.completions.parse(
+                model=self.model,
+                messages=self._build_messages(prompt, system),
+                temperature=self._temperature,
+                response_format=schema,
+            )
+        except BadRequestError as error:
+            if error.code == "json_validate_failed":
+                raise LLMOutputError(
+                    f"Model output did not match {schema.__name__}"
+                ) from error
+            raise
         choice = self._log_response(response, time.perf_counter() - started)
 
         parsed = choice.message.parsed

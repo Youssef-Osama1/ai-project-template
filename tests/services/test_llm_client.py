@@ -2,7 +2,9 @@ import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+from openai import BadRequestError
 from pydantic import BaseModel
 
 from app.core.exceptions import LLMOutputError
@@ -114,6 +116,28 @@ async def test_extract_raises_when_model_refuses(llm, fake_openai):
 
     with pytest.raises(LLMOutputError, match="can't help"):
         await llm.extract("something bad", Answer)
+
+
+async def test_extract_raises_when_output_breaks_schema(llm, fake_openai):
+    fake_openai.chat.completions.parse.side_effect = BadRequestError(
+        "schema mismatch",
+        response=httpx.Response(400, request=httpx.Request("POST", "https://test")),
+        body={"code": "json_validate_failed"},
+    )
+
+    with pytest.raises(LLMOutputError, match="did not match Answer"):
+        await llm.extract("hello", Answer)
+
+
+async def test_extract_reraises_other_bad_requests(llm, fake_openai):
+    fake_openai.chat.completions.parse.side_effect = BadRequestError(
+        "model not found",
+        response=httpx.Response(400, request=httpx.Request("POST", "https://test")),
+        body={"code": "model_not_found"},
+    )
+
+    with pytest.raises(BadRequestError):
+        await llm.extract("hello", Answer)
 
 
 async def test_close_closes_the_sdk_client(llm, fake_openai):
